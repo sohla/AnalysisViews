@@ -897,6 +897,37 @@ StereoPhaseView {
 		this.refresh;
 	}
 
+	// Print what the analysis is actually seeing, for when the picture and
+	// your ears disagree. If the per-band positions spread both ways but the
+	// display does not, the display is at fault; if they really do sit to one
+	// side, the signal does.
+	fieldReport {
+		var n, lu, lhs, rhs;
+		lu = lobeUp;
+		n = lu.size;
+		lhs = lu[0 .. (n.div(2) - 1)].sum;
+		rhs = lu[(n.div(2) + 1) .. (n - 1)].sum;
+		"StereoPhaseView field report\n".post;
+		"  correlation % | balance % | rmsL % rmsR %\n".postf(
+			correlation.round(0.001), this.balance.round(0.001),
+			rmsL.round(0.00001), rmsR.round(0.00001));
+		"  lobe energy: left % | right % | ratio %\n".postf(
+			lhs.round(1e-9), rhs.round(1e-9),
+			if(rhs > 1e-15) { (lhs / rhs).round(0.001) } { "inf" });
+		"  (balance and lobe ratio near 1 mean the FIELD is centred;\n"
+		"   if the picture still leans, the picture is wrong)\n".post;
+		"     i      Hz       levL       levR     pos    corr\n".post;
+		numBands.do { |i|
+			"  %  %  %  %  %  %\n".postf(
+				i.asString.padLeft(4),
+				bandFreqs[i].round(1).asString.padLeft(7),
+				bandL[i].round(0.00001).asString.padLeft(10),
+				bandR[i].round(0.00001).asString.padLeft(10),
+				this.bandPosition(i).round(0.01).asString.padLeft(6),
+				bandCorr[i].round(0.01).asString.padLeft(6));
+		};
+	}
+
 	info {
 		"StereoPhaseView\n"
 		"  mode    : %\n"
