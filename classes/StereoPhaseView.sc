@@ -16,6 +16,12 @@
 //              below the line is genuinely phase-cancelling. Correlation meter
 //              under that.
 //
+//              The colour map runs OUT FROM THE CENTRE: dead centre takes the
+//              bottom of the map, hard left and hard right both the top, so it
+//              is symmetric about C and shows how far off centre energy is.
+//              colorBy_(\freq) switches it to tint each direction by the mean
+//              pitch arriving from there instead.
+//
 //              showBands_(true) overlays the per-band spokes, coloured by
 //              frequency, when you want to know which material sits where
 //              rather than just how much. (Spokes alone were the first attempt
@@ -83,9 +89,10 @@ StereoPhaseView {
 
 	// --- data
 	var <correlation = 0, <rmsL = 0, <rmsR = 0;
-	var <dirBins = 61, lobeUp, lobeDown, <autoScale = true, scaleMax = 1e-9;
+	var <dirBins = 61, lobeUp, lobeDown, lobeToneW, lobeTone;
+	var <autoScale = true, scaleMax = 1e-9;
 	var <lobeRange = 36;   // dB below the loudest direction that still shows
-	var <showBands = false;
+	var <showBands = false, <colorBy = \spread;
 	var bandL, bandR, bandCorr, bandPeak, bandFreqs;
 	var scopePoints, scopeInFlight = false, scopeOsc, lastScopeReq = 0;
 
@@ -162,8 +169,10 @@ StereoPhaseView {
 		bandCorr = FloatArray.fill(numBands, 0);
 		bandPeak = FloatArray.fill(numBands, 0);
 		peakAges = FloatArray.fill(numBands, 0);
-		lobeUp   = FloatArray.fill(dirBins, 0);
-		lobeDown = FloatArray.fill(dirBins, 0);
+		lobeUp    = FloatArray.fill(dirBins, 0);
+		lobeDown  = FloatArray.fill(dirBins, 0);
+		lobeToneW = FloatArray.fill(dirBins, 0);
+		lobeTone  = FloatArray.fill(dirBins, 0.5);
 		scaleMax = 1e-9;
 	}
 
@@ -434,14 +443,16 @@ StereoPhaseView {
 	prBuildLobe { arg dt;
 		var frameMax = 0;
 
-		dirBins.do { |k| lobeUp[k] = 0; lobeDown[k] = 0 };
+		dirBins.do { |k| lobeUp[k] = 0; lobeDown[k] = 0; lobeToneW[k] = 0 };
 
 		numBands.do { |i|
 			var l = bandL[i], r = bandR[i];
 			var energy = ((l * l) + (r * r)) / 2;     // power adds linearly
 			var c = bandCorr[i].clip(-1, 1);
-			var fk, k0, k1, frac, down;
+			var fk, k0, k1, frac, down, tone;
 			if(energy > 1e-12) {
+				// where this band sits in the spectrum, 0 low .. 1 high
+				tone = i / (numBands - 1).max(1);
 				// split across the two nearest bins, so moving a source does
 				// not make the lobe jump a whole bin at a time
 				fk = (((this.bandPosition(i) + 1) / 2) * (dirBins - 1))
@@ -454,6 +465,9 @@ StereoPhaseView {
 				lobeUp[k1] = lobeUp[k1] + (energy * frac);
 				lobeDown[k0] = lobeDown[k0] + (down * (1 - frac));
 				lobeDown[k1] = lobeDown[k1] + (down * frac);
+				// energy-weighted spectral position, for colouring
+				lobeToneW[k0] = lobeToneW[k0] + (energy * tone * (1 - frac));
+				lobeToneW[k1] = lobeToneW[k1] + (energy * tone * frac);
 			};
 		};
 
@@ -462,6 +476,18 @@ StereoPhaseView {
 		2.do {
 			lobeUp = this.prSmooth(lobeUp);
 			lobeDown = this.prSmooth(lobeDown);
+			lobeToneW = this.prSmooth(lobeToneW);
+		};
+
+		// divide the weighted sum back down to a mean, AFTER smoothing, so
+		// the colour of a direction is the average pitch of what arrives
+		// from it rather than of whatever band happened to land in that bin
+		dirBins.do { |k|
+			lobeTone[k] = if(lobeUp[k] > 1e-15) {
+				(lobeToneW[k] / lobeUp[k]).clip(0, 1)
+			} {
+				0.5
+			};
 		};
 
 		dirBins.do { |k| frameMax = max(frameMax, lobeUp[k]) };
@@ -537,7 +563,7 @@ StereoPhaseView {
 
 			// --- the stereo field itself ---
 			this.prFillLobe(cx, cy, rad, lobeUp, 1,
-				map.at(0.65).alpha_(0.5), map.at(0.95));
+				nil, Color.white.alpha_(0.75), lobeTone);
 
 			// --- optional per-band detail on top ---
 			if(showBands) {
@@ -568,9 +594,29 @@ StereoPhaseView {
 		};
 	}
 
-	// dir points up (+1) for the field, down (-1) for the anti-correlated part
-	prFillLobe { arg cx, cy, rad, bins, dir, fillColor, lineColor;
-		var pts, any = false;
+	// Where a direction bin sits in the colour map.
+	//
+	// \spread (default) runs the gradient OUT FROM THE CENTRE: dead centre
+	// takes the bottom of the map and hard left and hard right both take the
+	// top, so the colouring is symmetric about C and reads as "how far off
+	// centre is this". A left-to-right ramp would make the two sides different
+	// colours for no reason - the display's own geometry already says which
+	// side something is on.
+	//
+	// \freq instead tints each direction by the mean pitch arriving from it,
+	// for when the question is what is over there rather than how wide it is.
+	prWedgeTone { arg k, tones;
+		^switch(colorBy,
+			\freq, { if(tones.notNil) { tones[k] } { 0.5 } },
+			{ (((k / (dirBins - 1)) * 2) - 1).abs }      // \spread
+		);
+	}
+
+	// dir points up (+1) for the field, down (-1) for the anti-correlated part.
+	// Pass `tones` to colour each wedge by the mean pitch arriving from that
+	// direction; pass nil for a flat fill.
+	prFillLobe { arg cx, cy, rad, bins, dir, fillColor, lineColor, tones;
+		var pts, any = false, centre = Point(cx, cy);
 		pts = dirBins.collect { |k|
 			var rr = this.prLobeRadius(bins[k]);
 			var a = this.prBinAngle(k);
@@ -579,11 +625,25 @@ StereoPhaseView {
 		};
 		if(any.not) { ^this };
 
-		Pen.color = fillColor;
-		Pen.moveTo(Point(cx, cy));
-		pts.do { |pt| Pen.lineTo(pt) };
-		Pen.lineTo(Point(cx, cy));
-		Pen.fill;
+		if(tones.isNil) {
+			Pen.color = fillColor;
+			Pen.moveTo(centre);
+			pts.do { |pt| Pen.lineTo(pt) };
+			Pen.lineTo(centre);
+			Pen.fill;
+		} {
+			// one wedge per bin pair, so the map reads across the field
+			(dirBins - 1).do { |k|
+				Pen.color = map.at(
+					(this.prWedgeTone(k, tones) + this.prWedgeTone(k + 1, tones)) / 2
+				).alpha_(0.78);
+				Pen.moveTo(centre);
+				Pen.lineTo(pts[k]);
+				Pen.lineTo(pts[k + 1]);
+				Pen.lineTo(centre);
+				Pen.fill;
+			};
+		};
 
 		Pen.color = lineColor;
 		Pen.width = 1.5;
@@ -857,6 +917,9 @@ StereoPhaseView {
 	peakHold_ { arg sec; peakHold = sec }
 	showGrid_ { arg bool; showGrid = bool; this.refresh }
 	showBands_ { arg bool; showBands = bool; this.refresh }
+	// \spread : gradient radiates out from centre, symmetric left and right
+	// \freq   : gradient follows the pitch arriving from each direction
+	colorBy_ { arg mode; colorBy = mode; this.refresh }
 	autoScale_ { arg bool; autoScale = bool; this.refresh }
 	lobeRange_ { arg db; lobeRange = db.clip(6, 120); this.refresh }
 	dirBins_ { arg n;

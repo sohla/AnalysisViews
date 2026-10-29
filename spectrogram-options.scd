@@ -326,7 +326,15 @@ p.dirBins_(121);           // smoother lobe
 p.autoScale_(true);        // normalise to the loudest direction
 
 // look
-p.map_(\turbo);            // spoke colour, by frequency
+// The map runs OUT FROM THE CENTRE: centre takes the bottom of the map,
+// hard left and hard right both take the top. Symmetric about C, so the
+// colour says how far off centre energy is, not which side it is on.
+p.map_(\jet);
+p.map_(\turbo);
+p.map_(\viridis);
+p.colorBy_(\freq);          // instead tint each direction by its mean pitch
+p.colorBy_(\spread);        // back to centre-outward (default)
+p.directionTones.round(0.01);   // 0 low .. 1 high, per direction bin
 p.corrMap_(\rdbu);         // correlation colour, diverging
 p.persistence_(0.9);       // goniometer phosphor trail
 p.scopeColor_(Color(1, 0.8, 0.3));
