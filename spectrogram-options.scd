@@ -50,6 +50,30 @@ s.waitForBoot({
 x = Synth(\specTest);      // run this so there is something to see
 x.free;
 
+/* A warning about Splay + a falling amplitude series, since the test
+   signal above uses one.
+
+   Splay places array element 0 hard LEFT and the last element hard RIGHT.
+   With amp = 0.5/(i+1) the loudest partial is element 0, so the loudest
+   thing in the patch is pinned hard left. Measured on these 16 harmonics:
+
+     amp 0.5/(i+1), in order    balance -0.615   rmsL/rmsR 4.2 : 1
+     same spectrum, scrambled   balance -0.063   rmsL/rmsR 1.14 : 1
+     equal amplitudes           balance  0.0     rmsL/rmsR 1.0 : 1
+
+   Element 0 alone carries 63% of the total energy, and the first three
+   carry 86%. So that patch really is about 4:1 left-heavy - if the stereo
+   display leans left on it, the display is right.
+
+   To keep the 1/(i+1) spectrum but spread it across the field, scramble
+   the array so loud and quiet partials are not sorted by position: */
+(
+~even = {
+	Splay.ar(Array.fill(16, { |i| SinOsc.ar(110 * (i + 1), 0, 0.5 / (i + 1)) }).scramble) * 0.2
+}.play;
+)
+~even.free;
+
 
 // ---- look at the available gradients ---------------------------------
 SpecColorMap.plotAll;
@@ -387,8 +411,10 @@ p.close;
 
 // Worth knowing about Splay: it spreads its array across the image in
 // ARRAY ORDER, so ascending frequencies put every low on the left and
-// every high on the right. That is a genuinely left-weighted field by
-// energy even though it sounds wide. Scramble it and the lobe evens out:
+// every high on the right. Overall balance still measures 0.0 - the two
+// channels carry equal energy - but the lobe is coloured and shaped by
+// where each band sits, so lows bunch to one side. Scrambling the array
+// mixes the frequencies across the field:
 (~t = { Splay.ar(SinOsc.ar([180, 330, 540, 880, 1400, 2300, 3700, 6000], 0, 0.12)) }.play;)
 (~t.free; ~t = { Splay.ar(SinOsc.ar([180, 330, 540, 880, 1400, 2300, 3700, 6000].scramble, 0, 0.12)) }.play;)
 ~t.free;
@@ -396,9 +422,15 @@ p.close;
 
 // Sanity check it against known signals:
 (
+// One Select per channel. Selecting on an array of stereo pairs does NOT
+// work - [[a,b],[c,d],[e,f]].flop is two arrays of three, so Select sees
+// two options instead of three and the result collapses to left-only.
 ~t = { |which = 0|
 	var n = PinkNoise.ar(0.3), n2 = PinkNoise.ar(0.3);
-	Select.ar(which, [[n, n], [n, n.neg], [n, n2]].flop).flop
+	[
+		Select.ar(which, [n, n,     n ]),   // left
+		Select.ar(which, [n, n.neg, n2])    // right
+	]
 }.play;
 )
 ~t.set(\which, 0);   // identical  -> correlation +1, vertical line in \gonio
@@ -407,7 +439,8 @@ p.close;
 ~t.free;
 
 // And the field itself - Splay spreads an array across the image in
-// ARRAY ORDER, so ascending frequencies put lows left and highs right:
+// ARRAY ORDER, so ascending frequencies put lows left and highs right
+// (overall balance stays 0.0; it is the distribution that shifts):
 (~t = { Splay.ar(SinOsc.ar([180, 330, 540, 880, 1400, 2300, 3700, 6000], 0, 0.12)) }.play;)
 ~t.free;
 (~t = { var m = Mix(SinOsc.ar([180, 330, 540, 880], 0, 0.12)); [m, m] }.play;)      // mono
