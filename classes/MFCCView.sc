@@ -36,7 +36,7 @@ MFCCView {
 
 	// --- source
 	var <numCoeffs, <numBands, <startCoeff, <minFreq, <maxFreq, <bufSize;
-	var <inBus, <server, mfccBus, mfccSynth, task, <isRunning = false;
+	var <inBus, <server, <feed, task, <isRunning = false;
 
 	// --- data
 	var values, <range = 50, <autoRange = true, runningMax = 1;
@@ -144,16 +144,6 @@ MFCCView {
 	// source
 	// =====================================================================
 
-	prSendDef {
-		SynthDef(\mfccView, { |inbus = 0, out = 0, lo = 30, hi = 18000|
-			Out.kr(out, FluidMFCC.kr(InFeedback.ar(inbus),
-				numCoeffs: numCoeffs, numBands: numBands,
-				startCoeff: startCoeff, minFreq: lo, maxFreq: hi,
-				windowSize: bufSize,
-				maxNumCoeffs: numCoeffs, maxNumBands: numBands));
-		}).send(server);
-	}
-
 	start {
 		if(isRunning) { ^this };
 		if(server.serverRunning.not) { "MFCCView: server is not running.".warn; ^this };
@@ -164,19 +154,19 @@ MFCCView {
 		};
 
 		isRunning = true;
-		this.prSendDef;
 		cmdPeriodFunc = cmdPeriodFunc ?? { { this.prRestart } };
 		CmdPeriod.add(cmdPeriodFunc);
 
-		mfccBus = Bus.control(server, numCoeffs);
+		// shared with any other view asking for the same analysis
+		feed = SpecAnalysisFeed.mfcc(server, inBus, numCoeffs, numBands,
+			startCoeff, minFreq, maxFreq, bufSize);
+
 		task = Task({
-			server.sync;
-			mfccSynth = Synth(\mfccView,
-				[\inbus, inBus, \out, mfccBus, \lo, minFreq, \hi, maxFreq], server);
+			var vals;
 			0.2.wait;
 			{
-				this.prFrame(mfccBus.getnSynchronous(numCoeffs));
-				this.refresh;
+				vals = feed.read;
+				if(vals.notNil) { this.prFrame(vals); this.refresh };
 				fps.reciprocal.wait;
 			}.loop;
 		}).play(AppClock);
@@ -193,8 +183,7 @@ MFCCView {
 		isRunning = false;
 		task.stop; task = nil;
 		if(cmdPeriodFunc.notNil) { CmdPeriod.remove(cmdPeriodFunc) };
-		try { mfccSynth.free }; mfccSynth = nil;
-		try { mfccBus.free };  mfccBus = nil;
+		feed !? { feed.release }; feed = nil;
 	}
 
 	// =====================================================================
@@ -442,7 +431,8 @@ MFCCView {
 	fps_ { arg f; fps = f.clip(1, 120); this.prBuildImage; this.refresh }
 	seconds_ { arg sec; seconds = sec.max(0.5); this.prBuildImage; this.refresh }
 
-	inBus_ { arg b; inBus = b; mfccSynth !? { mfccSynth.set(\inbus, b) } }
+	// changes which analysis is wanted, so the feed has to be swapped
+	inBus_ { arg b; this.prReshape({ inBus = b }) }
 
 	// these change the shape of the analysis, so the synth has to restart
 	numCoeffs_ { arg n; this.prReshape({ numCoeffs = n.clip(2, 128) }) }
@@ -461,9 +451,10 @@ MFCCView {
 	}
 
 	freqRange_ { arg lo, hi;
-		minFreq = lo.max(1);
-		maxFreq = hi.min((server.sampleRate ? 44100) / 2);
-		mfccSynth !? { mfccSynth.set(\lo, minFreq, \hi, maxFreq) };
+		this.prReshape({
+			minFreq = lo.max(1);
+			maxFreq = hi.min((server.sampleRate ? 44100) / 2);
+		});
 	}
 
 	// --- inspection ---

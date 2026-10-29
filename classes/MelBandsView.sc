@@ -33,7 +33,7 @@ MelBandsView {
 
 	// --- source
 	var <numBands, <minFreq, <maxFreq, <bufSize, <inBus, <server;
-	var melBus, melSynth, task, <isRunning = false;
+	var <feed, task, <isRunning = false;
 
 	// --- data
 	var values, peaks, peakAges, bandFreqs;
@@ -119,15 +119,6 @@ MelBandsView {
 	// source
 	// =====================================================================
 
-	prSendDef {
-		SynthDef(\melBandsView, { |inbus = 0, out = 0, lo = 30, hi = 18000|
-			Out.kr(out, FluidMelBands.kr(InFeedback.ar(inbus),
-				numBands: numBands, minFreq: lo, maxFreq: hi,
-				normalize: 1, scale: 1,            // scale 1 == dB out
-				windowSize: bufSize, maxNumBands: numBands));
-		}).send(server);
-	}
-
 	start {
 		if(isRunning) { ^this };
 		if(server.serverRunning.not) {
@@ -141,19 +132,19 @@ MelBandsView {
 		};
 
 		isRunning = true;
-		this.prSendDef;
 		cmdPeriodFunc = cmdPeriodFunc ?? { { this.prRestart } };
 		CmdPeriod.add(cmdPeriodFunc);
 
-		melBus = Bus.control(server, numBands);
+		// shared with any other view asking for the same analysis
+		feed = SpecAnalysisFeed.melBands(server, inBus, numBands,
+			minFreq, maxFreq, bufSize);
+
 		task = Task({
-			server.sync;
-			melSynth = Synth(\melBandsView,
-				[\inbus, inBus, \out, melBus, \lo, minFreq, \hi, maxFreq], server);
+			var vals;
 			0.2.wait;
 			{
-				this.prFrame(melBus.getnSynchronous(numBands));
-				this.refresh;
+				vals = feed.read;
+				if(vals.notNil) { this.prFrame(vals); this.refresh };
 				fps.reciprocal.wait;
 			}.loop;
 		}).play(AppClock);
@@ -170,8 +161,7 @@ MelBandsView {
 		isRunning = false;
 		task.stop; task = nil;
 		if(cmdPeriodFunc.notNil) { CmdPeriod.remove(cmdPeriodFunc) };
-		try { melSynth.free }; melSynth = nil;
-		try { melBus.free };  melBus = nil;
+		feed !? { feed.release }; feed = nil;
 	}
 
 	// =====================================================================
@@ -431,22 +421,26 @@ MelBandsView {
 	peakDecay_ { arg dbPerSec; peakDecay = dbPerSec }
 	resetPeaks { numBands.do { |i| peaks[i] = dbFloor; peakAges[i] = 0 }; this.refresh }
 
-	inBus_ { arg b; inBus = b; melSynth !? { melSynth.set(\inbus, b) } }
+	// these change which analysis is wanted, so the feed has to be swapped
+	inBus_ { arg b; this.prReacquire({ inBus = b }) }
 
 	numBands_ { arg n;
-		var wasRunning = isRunning;
-		numBands = n.clip(4, 512);
-		if(wasRunning) { this.stop };
-		this.prBuildBands;
-		if(wasRunning) { this.start };
-		this.refresh;
+		this.prReacquire({ numBands = n.clip(4, 512); this.prBuildBands });
 	}
 
 	freqRange_ { arg lo, hi;
-		minFreq = lo.max(1);
-		maxFreq = hi.min((server.sampleRate ? 44100) / 2);
-		this.prBuildBands;
-		melSynth !? { melSynth.set(\lo, minFreq, \hi, maxFreq) };
+		this.prReacquire({
+			minFreq = lo.max(1);
+			maxFreq = hi.min((server.sampleRate ? 44100) / 2);
+			this.prBuildBands;
+		});
+	}
+
+	prReacquire { arg changes;
+		var wasRunning = isRunning;
+		if(wasRunning) { this.stop };
+		changes.value;
+		if(wasRunning) { this.start };
 		this.refresh;
 	}
 

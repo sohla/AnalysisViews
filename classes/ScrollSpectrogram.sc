@@ -50,7 +50,7 @@ ScrollSpectrogram {
 
 	// --- data source
 	var <source, <inBus, <bufSize, <numBands;
-	var fftBuf, fftSynth, melBus, melSynth, <server;
+	var fftBuf, fftSynth, <feed, <server;
 	var fftOsc, rawBuf, fftLo, fftCount, fftChunks, chunksPending = 0;
 	var fftInFlight = false, lastRequest = 0;
 
@@ -298,15 +298,6 @@ ScrollSpectrogram {
 		SynthDef(\scrollSpec_fft, { |inbus = 0, buffer = 0|
 			FFT(buffer, InFeedback.ar(inbus), hop: 0.5, wintype: 1);
 		}).send(server);
-
-		if(\FluidMelBands.asClass.notNil) {
-			SynthDef(\scrollSpec_mel, { |inbus = 0, out = 0, lo = 30, hi = 18000|
-				Out.kr(out, FluidMelBands.kr(InFeedback.ar(inbus),
-					numBands: numBands, minFreq: lo, maxFreq: hi,
-					normalize: 1, scale: 1,              // scale 1 == dB out
-					windowSize: bufSize, maxNumBands: numBands));
-			}).send(server);
-		};
 	}
 
 	start {
@@ -419,17 +410,18 @@ ScrollSpectrogram {
 	}
 
 	prStartMel {
-		melBus = Bus.control(server, numBands);
+		// shared with any other view asking for the same analysis, so a
+		// spectrogram and a bands view side by side cost one STFT, not two
+		feed = SpecAnalysisFeed.melBands(server, inBus, numBands,
+			minFreq, maxFreq, bufSize);
 		task = Task({
-			server.sync;
-			melSynth = Synth(\scrollSpec_mel,
-				[\inbus, inBus, \out, melBus, \lo, minFreq, \hi, maxFreq], server);
+			var vals;
 			0.2.wait;
 			{
 				if(isFrozen.not) {
 					// shared memory: synchronous, no OSC round trip
-					this.prPushColumn(melBus.getnSynchronous(numBands));
-					this.refresh;
+					vals = feed.read;
+					if(vals.notNil) { this.prPushColumn(vals); this.refresh };
 				};
 				fps.reciprocal.wait;
 			}.loop;
@@ -442,9 +434,9 @@ ScrollSpectrogram {
 		if(cmdPeriodFunc.notNil) { CmdPeriod.remove(cmdPeriodFunc) };
 		try { fftOsc.free };  fftOsc = nil;
 		try { fftSynth.free }; fftSynth = nil;
-		try { melSynth.free }; melSynth = nil;
+
 		try { fftBuf.free };  fftBuf = nil;
-		try { melBus.free };  melBus = nil;
+		feed !? { feed.release }; feed = nil;
 		fftInFlight = false; chunksPending = 0;
 	}
 
@@ -462,8 +454,22 @@ ScrollSpectrogram {
 	dbCeil_ { arg db; dbCeil = db; this.refresh }
 	dbRange_ { arg lo, hi = -6; dbFloor = lo; dbCeil = hi; this.refresh }
 	dbOffset_ { arg db; dbOffset = db }
-	inBus_ { arg b; inBus = b; fftSynth !? { fftSynth.set(\inbus, b) };
-		melSynth !? { melSynth.set(\inbus, b) } }
+	inBus_ { arg b;
+		if(source == \mel) {
+			this.prReacquire({ inBus = b });
+		} {
+			inBus = b;
+			fftSynth !? { fftSynth.set(\inbus, b) };
+		};
+	}
+
+	// the \mel feed is keyed on its parameters, so changing one swaps feeds
+	prReacquire { arg changes;
+		var wasRunning = isRunning;
+		if(wasRunning) { this.stop };
+		changes.value;
+		if(wasRunning) { this.start };
+	}
 
 	background_ { arg c; background = c; this.clear }
 
@@ -477,12 +483,11 @@ ScrollSpectrogram {
 	}
 
 	freqRange_ { arg lo, hi;
-		minFreq = lo.max(1);
-		maxFreq = hi.min((server.sampleRate ? 44100) / 2);
-		this.prBuildMaps;
-		if(source == \mel) {
-			melSynth !? { melSynth.set(\lo, minFreq, \hi, maxFreq) };
-		};
+		this.prReacquire({
+			minFreq = lo.max(1);
+			maxFreq = hi.min((server.sampleRate ? 44100) / 2);
+			this.prBuildMaps;
+		});
 		this.clear;
 	}
 

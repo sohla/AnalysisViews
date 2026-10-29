@@ -11,6 +11,7 @@ magnitude 1.0 — a hard floor of −48.2 dBFS at `bufSize` 1024.
 | `MFCCView` | mel-frequency cepstral coefficients | time × coefficient, or bipolar bars |
 | `StereoPhaseView` | stereo field and phase | polar direction, goniometer, correlation |
 | `SpecColorMap` | 21 gradients shared by all of the above | — |
+| `SpecAnalysisFeed` | one FluCoMa analysis, shared between views | — |
 
 ## Install
 
@@ -55,6 +56,33 @@ inside the pane, and it lands off the bottom.
 ~m = MelBandsView(~p);                            // right
 ~m = MelBandsView(~p, ~p.bounds);                 // wrong — invisible
 ```
+
+## Shared analysis
+
+`MelBandsView`, `MFCCView` and `ScrollSpectrogram(source: \mel)` all need a
+FluCoMa analysis. Rather than each running its own, they acquire a
+`SpecAnalysisFeed`: a reference-counted synth plus control bus, identified by
+everything that affects its output — analysis type, server, input bus and
+parameters. Views asking for the same analysis share one synth; a view wanting
+something different still gets its own. The last release frees it.
+
+Stacking a spectrogram, a bands view and a cepstrogram therefore costs **two**
+analyses rather than three, provided the first two agree on their parameters:
+
+```supercollider
+SpecAnalysisFeed.report;
+// SpecAnalysisFeed: 2 active
+//   mel_localhost_0_96_30_18000_2048 : 96 channels, 2 users, bus 0
+//   mfcc_localhost_0_13_40_1_30_18000_2048 : 13 channels, 1 user, bus 96
+```
+
+Sharing only happens when the parameters match — a 96-band spectrogram and a
+48-band meter are two different analyses and get two feeds, which is correct
+but costs the extra STFT. The stacked example in `spectrogram-options.scd` puts
+both on 96 bands so they share.
+
+Changing `inBus`, `numBands` or the frequency range changes which analysis is
+wanted, so those setters now swap feeds, which means a brief restart.
 
 ## Measured behaviour
 

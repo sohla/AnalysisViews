@@ -457,20 +457,28 @@ p.close;
 // Omit the bounds argument when embedding: each view fills its pane.
 // Passing ~p2.bounds would be wrong - that rect is where ~p2 sits in the
 // WINDOW, and using it inside ~p2 pushes the view off the bottom.
+//
+// The spectrogram and the bands view below ask for the SAME mel analysis
+// (96 bands, 30-18000 Hz, window 2048), so SpecAnalysisFeed hands them one
+// shared synth instead of running the STFT twice. Give them different
+// numbers and they each get their own feed, which is correct but costs
+// another analysis. SpecAnalysisFeed.report shows what is shared.
 ~w = Window("spectrogram + bands + mfcc", Rect(100, 60, 900, 880)).front;
 ~p1 = CompositeView(~w, Rect(0, 0, 900, 400)).resize_(5);
 ~p2 = CompositeView(~w, Rect(0, 405, 900, 220)).resize_(5);
 ~p3 = CompositeView(~w, Rect(0, 630, 900, 240)).resize_(5);
-~a = ScrollSpectrogram(~p1, source: \mel, numBands: 192,
+~a = ScrollSpectrogram(~p1, source: \mel, numBands: 96,
 	bufSize: 2048, numRows: 360, seconds: 10, fps: 30, map: \viridis,
 	dbFloor: -95, dbCeil: -10, minFreq: 30, maxFreq: 18000);
-~m = MelBandsView(~p2, numBands: 48, minFreq: 30, maxFreq: 18000,
-	map: \viridis, dbFloor: -95, dbCeil: -10, fps: 45);
+~m = MelBandsView(~p2, numBands: 96, minFreq: 30, maxFreq: 18000,
+	bufSize: 2048, map: \viridis, dbFloor: -95, dbCeil: -10, fps: 45);
 ~f = MFCCView(~p3, numCoeffs: 13, startCoeff: 1,
 	map: \coolwarm, mode: \scroll, seconds: 10, fps: 30);
 ~a.start; ~m.start; ~f.start;
 ~w.onClose_({ ~a.stop; ~m.stop; ~f.stop });
 )
+
+SpecAnalysisFeed.report;   // one mel feed with two users, one mfcc feed
 
 ~a.map_(\magma); ~m.map_(\magma);
 ~a.dbRange_(-110, -20); ~m.dbRange_(-110, -20);
