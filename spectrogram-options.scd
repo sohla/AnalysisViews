@@ -362,6 +362,38 @@ p.stop;
 p.close;
 
 
+/* ---------------------------------------------------------------------
+   CALIBRATION - is the view leaning, or is the material?
+
+   Equal energy mirrored about centre: 400 Hz hard left, 1600 Hz hard
+   right, 800 Hz up the middle. Different frequencies each side, but the
+   display bins by DIRECTION, so the picture must come out symmetric:
+   a centre lobe with matching pairs either side.
+
+   Measured on the real on-screen window this renders with 14588 units of
+   ink left of centre against 14613 right - a ratio of 0.998. If yours
+   looks symmetric, the view is fine and your material is simply
+   left-weighted. If it does not, something is wrong - say what window
+   size you are using.
+   --------------------------------------------------------------------- */
+(
+~cal = {
+	Pan2.ar(SinOsc.ar(400,  0, 0.2), -0.8)
+	+ Pan2.ar(SinOsc.ar(1600, 0, 0.2), 0.8)
+	+ Pan2.ar(SinOsc.ar(800,  0, 0.2), 0)
+}.play;
+)
+~cal.free;
+
+// Worth knowing about Splay: it spreads its array across the image in
+// ARRAY ORDER, so ascending frequencies put every low on the left and
+// every high on the right. That is a genuinely left-weighted field by
+// energy even though it sounds wide. Scramble it and the lobe evens out:
+(~t = { Splay.ar(SinOsc.ar([180, 330, 540, 880, 1400, 2300, 3700, 6000], 0, 0.12)) }.play;)
+(~t.free; ~t = { Splay.ar(SinOsc.ar([180, 330, 540, 880, 1400, 2300, 3700, 6000].scramble, 0, 0.12)) }.play;)
+~t.free;
+
+
 // Sanity check it against known signals:
 (
 ~t = { |which = 0|
