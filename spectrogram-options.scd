@@ -42,8 +42,9 @@ s.waitForBoot({
 			SinOsc.ar(110 * (i + 1), 0, 0.5 / (i + 1)) });
 
 		var clicks = Decay2.ar(Impulse.ar(2), 0.001, 0.08) * WhiteNoise.ar(0.3);
-		// Out.ar(0, ((sweep + noise + harm + clicks) * amp));
-		Out.ar(0, (harm * amp));
+	var sig = (sweep + noise + harm + clicks) * amp;
+	Out.ar(0, [sig * MouseX.kr(pi.neg,pi), sig]);
+	// Out.ar(0, (harm * amp));
 	}).add;
 )
 
