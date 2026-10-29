@@ -426,7 +426,7 @@ p.close;
 // work - [[a,b],[c,d],[e,f]].flop is two arrays of three, so Select sees
 // two options instead of three and the result collapses to left-only.
 ~t = { |which = 0|
-	var n = PinkNoise.ar(0.3), n2 = PinkNoise.ar(0.3);
+	var n = PinkNoise.ar(0.3), n2 = oise.ar(0.3);
 	[
 		Select.ar(which, [n, n,     n ]),   // left
 		Select.ar(which, [n, n.neg, n2])    // right
@@ -454,16 +454,19 @@ p.close;
    Stacked - spectrogram, live bands, cepstrogram
    ===================================================================== */
 (
+// Omit the bounds argument when embedding: each view fills its pane.
+// Passing ~p2.bounds would be wrong - that rect is where ~p2 sits in the
+// WINDOW, and using it inside ~p2 pushes the view off the bottom.
 ~w = Window("spectrogram + bands + mfcc", Rect(100, 60, 900, 880)).front;
 ~p1 = CompositeView(~w, Rect(0, 0, 900, 400)).resize_(5);
 ~p2 = CompositeView(~w, Rect(0, 405, 900, 220)).resize_(5);
 ~p3 = CompositeView(~w, Rect(0, 630, 900, 240)).resize_(5);
-~a = ScrollSpectrogram(~p1, ~p1.bounds, source: \mel, numBands: 192,
+~a = ScrollSpectrogram(~p1, source: \mel, numBands: 192,
 	bufSize: 2048, numRows: 360, seconds: 10, fps: 30, map: \viridis,
 	dbFloor: -95, dbCeil: -10, minFreq: 30, maxFreq: 18000);
-~m = MelBandsView(~p2, ~p2.bounds, numBands: 48, minFreq: 30, maxFreq: 18000,
+~m = MelBandsView(~p2, numBands: 48, minFreq: 30, maxFreq: 18000,
 	map: \viridis, dbFloor: -95, dbCeil: -10, fps: 45);
-~f = MFCCView(~p3, ~p3.bounds, numCoeffs: 13, startCoeff: 1,
+~f = MFCCView(~p3, numCoeffs: 13, startCoeff: 1,
 	map: \coolwarm, mode: \scroll, seconds: 10, fps: 30);
 ~a.start; ~m.start; ~f.start;
 ~w.onClose_({ ~a.stop; ~m.stop; ~f.stop });

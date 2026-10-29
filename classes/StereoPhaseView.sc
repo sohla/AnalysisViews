@@ -858,7 +858,13 @@ StereoPhaseView {
 			b = window.view.bounds;
 		} {
 			window = parent;
-			b = bounds ?? { parent.asView.bounds };
+			// A view's bounds are relative to its PARENT, so a CompositeView
+			// sitting at y=405 in a window reports Rect(0, 405, w, h). Using
+			// that as a child's bounds places the child 405px down INSIDE a
+			// container only h tall, i.e. off the bottom and invisible. Only
+			// a pane at the origin survives. Take the parent's interior
+			// instead, which always starts at 0,0.
+			b = bounds ?? { parent.asView.bounds.moveTo(0, 0) };
 		};
 
 		userview = UserView(window, b)
