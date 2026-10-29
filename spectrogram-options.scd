@@ -4,6 +4,7 @@
    ScrollSpectrogram  - time on x, two interchangeable data paths
    MelBandsView       - frequency on x, current frame only
    MFCCView           - cepstral coefficients, scrolling or bipolar bars
+   StereoPhaseView    - stereo field and phase, PAZ-style polar + goniometer
  Evaluate blocks one at a time (Cmd-Return inside each parenthesis).
 
  Classes live in ./classes, symlinked into Extensions as
@@ -259,6 +260,81 @@ f.coeffIndices;
 f.clear;
 f.stop;
 f.close;
+
+
+
+/* =====================================================================
+   E - StereoPhaseView
+   Stereo field and phase. The \position mode follows the Waves PAZ
+   Position panel - a half circle from hard left to hard right - but
+   draws one spoke per frequency band, coloured by frequency, so you
+   can see WHICH material sits where rather than just one lobe.
+   Needs a stereo source on inBus (reads 2 consecutive buses).
+   ===================================================================== */
+(
+p = StereoPhaseView(
+	numBands: 16,
+	minFreq: 40,
+	maxFreq: 16000,
+	inBus: 0,
+	mode: \position,       // \position | \gonio | \bands | \history
+	map: \viridis,
+	dbFloor: -60,
+	dbCeil: 0,
+	fps: 30,
+	integration: 0.3       // averaging window, seconds
+);
+p.start;
+)
+
+p.info;
+
+// modes - "m" in the window cycles them
+p.mode_(\position);        // PAZ-style polar field + correlation meter
+p.mode_(\gonio);           // Lissajous: mono vertical, out-of-phase horizontal
+p.mode_(\bands);           // correlation per band, diverging colour
+p.mode_(\history);         // correlation over time
+
+// look
+p.map_(\turbo);            // spoke colour, by frequency
+p.corrMap_(\rdbu);         // correlation colour, diverging
+p.persistence_(0.9);       // goniometer phosphor trail
+p.scopeColor_(Color(1, 0.8, 0.3));
+p.dbRange_(-70, 0);
+
+// analysis (these restart the synth)
+p.numBands_(24);
+// Correlation is a windowed estimate, so it has variance - and bass-heavy
+// material has lots of it. Measured on two UNCORRELATED sources (true
+// correlation 0): pink noise at 0.05 s reads +/-0.3, at 0.5 s +/-0.15;
+// white noise at 0.05 s is already +/-0.02. Hence the 0.3 s default.
+p.integration_(0.05);      // fast, but jittery on anything bass-heavy
+p.integration_(0.5);       // steady, slower to react
+p.integration_(0.3);
+p.bandQ_(0.5);             // wider bands
+p.freqRange_(60, 12000);
+
+// read the numbers
+p.correlation;             // -1 .. +1
+p.balance;                 // -1 left, 0 centre, +1 right
+p.bandCorrelations.round(0.01);
+p.bandFreqs.round(1);
+
+p.stop;
+p.close;
+
+
+// Sanity check it against known signals:
+(
+~t = { |which = 0|
+	var n = PinkNoise.ar(0.3), n2 = PinkNoise.ar(0.3);
+	Select.ar(which, [[n, n], [n, n.neg], [n, n2]].flop).flop
+}.play;
+)
+~t.set(\which, 0);   // identical  -> correlation +1, vertical line in \gonio
+~t.set(\which, 1);   // inverted   -> correlation -1, horizontal line
+~t.set(\which, 2);   // unrelated  -> correlation  0, round cloud
+~t.free;
 
 
 
