@@ -2,13 +2,25 @@
 //
 // Four renderings of one cheap control bus, switch live with mode_ (or "m"):
 //
-//   \position  A polar stereo-field display in the spirit of the Waves PAZ
-//              Position panel: a half circle from hard left through centre to
-//              hard right, with one spoke per frequency band placed at the
-//              angle its L/R balance implies and reaching out as far as its
-//              level. PAZ draws a single undifferentiated lobe; colouring the
-//              spokes by frequency says *which* material sits where, which is
-//              usually the question you actually have. Correlation meter below.
+//   \position  Polar stereo field, after the Waves PAZ Position panel: a half
+//              circle from hard left through centre to hard right, showing how
+//              much energy arrives from each DIRECTION. Every band's energy is
+//              binned by the direction its L/R balance implies, giving a
+//              continuous lobe - a narrow upright spike for mono, a broad fan
+//              for a wide mix, separate humps for hard-panned material.
+//
+//              Out-of-phase energy appears as a second lobe BELOW the horizon,
+//              in red. It carries only the anti-correlated share of each band
+//              (energy * max(0, -correlation)), so it stays empty for in-phase
+//              material AND for merely-uncorrelated-wide material: anything
+//              below the line is genuinely phase-cancelling. Correlation meter
+//              under that.
+//
+//              showBands_(true) overlays the per-band spokes, coloured by
+//              frequency, when you want to know which material sits where
+//              rather than just how much. (Spokes alone were the first attempt
+//              at this view and read as an unintelligible star - the direction
+//              histogram is what makes spread legible.)
 //   \gonio     Classic Lissajous vectorscope with phosphor persistence.
 //              Mono reads as a vertical line, out-of-phase as horizontal.
 //   \bands     Per-band correlation as bars, diverging colour, so a band that
@@ -48,6 +60,9 @@
 //
 //   p.mode_(\gonio);  p.mode_(\position);
 //   p.numBands_(24);
+//   p.showBands_(true);          // per-band spokes over the lobe
+//   p.lobeRange_(36);            // dB of direction range the lobe shows
+//   p.dirBins_(61);              // angular resolution of the lobe
 //   p.integration_(0.05);        // averaging window, seconds (see note below)
 //   p.freqRange_(40, 16000);
 //   p.dbRange_(-60, 0);
@@ -61,12 +76,16 @@ StereoPhaseView {
 	classvar <>defaultCorrMap = \coolwarm;
 
 	// --- source
-	var <numBands, <minFreq, <maxFreq, <bandQ = 0.7, <integration = 0.3;
+	var <numBands, <minFreq, <maxFreq, <bandQ = 1.0, <bandRq = 0.5;
+	var <integration = 0.3;
 	var <inBus, <server, corrBus, corrSynth, scopeBuf, scopeSynth, task;
 	var <isRunning = false, <scopeFrames = 1024;
 
 	// --- data
 	var <correlation = 0, <rmsL = 0, <rmsR = 0;
+	var <dirBins = 61, lobeUp, lobeDown, <autoScale = true, scaleMax = 1e-9;
+	var <lobeRange = 36;   // dB below the loudest direction that still shows
+	var <showBands = false;
 	var bandL, bandR, bandCorr, bandPeak, bandFreqs;
 	var scopePoints, scopeInFlight = false, scopeOsc, lastScopeReq = 0;
 
@@ -125,14 +144,27 @@ StereoPhaseView {
 	// =====================================================================
 
 	prBuildBands {
+		var ratio;
 		bandFreqs = numBands.collect { |i|
 			minFreq * ((maxFreq / minFreq) ** (i / (numBands - 1).max(1)))
 		};
+		// BPF's third argument is rq, the RECIPROCAL of Q: bandwidth over
+		// centre frequency. A fixed 0.7 is far wider than the spacing between
+		// bands once you have more than a handful of them, and wide bands
+		// smear direction - a band that overlaps both a hard-left and a
+		// hard-right source reports the average, i.e. centre, inventing energy
+		// in directions nothing is coming from. So derive it from the spacing
+		// and let bandQ act as a width multiplier around that.
+		ratio = (maxFreq / minFreq) ** (1 / (numBands - 1).max(1));
+		bandRq = ((ratio - ratio.reciprocal) * bandQ).clip(0.01, 2);
 		bandL    = FloatArray.fill(numBands, 0);
 		bandR    = FloatArray.fill(numBands, 0);
 		bandCorr = FloatArray.fill(numBands, 0);
 		bandPeak = FloatArray.fill(numBands, 0);
 		peakAges = FloatArray.fill(numBands, 0);
+		lobeUp   = FloatArray.fill(dirBins, 0);
+		lobeDown = FloatArray.fill(dirBins, 0);
+		scaleMax = 1e-9;
 	}
 
 	prBuildHistory {
@@ -161,7 +193,15 @@ StereoPhaseView {
 			var sLR = RunningSum.ar(l * r, nSamp);
 			var overall = sLR / (sqrt(sLL * sRR) + eps);
 			var perBand = bandFreqs.collect { |f|
-				var bl = BPF.ar(l, f, q), br = BPF.ar(r, f, q);
+				// Cascaded, i.e. 4th order. A single BPF's skirts are shallow
+				// enough that a band sitting between a hard-left source and a
+				// hard-right one passes a good deal of both and reports the
+				// average - centre - putting energy on the display in a
+				// direction nothing is actually coming from. Two in series
+				// roughly doubles the rejection for one extra cheap filter.
+				// rq is widened to keep about the same -3 dB width.
+				var bl = BPF.ar(BPF.ar(l, f, q * 1.4), f, q * 1.4);
+				var br = BPF.ar(BPF.ar(r, f, q * 1.4), f, q * 1.4);
 				var bLL = RunningSum.ar(bl * bl, nSamp);
 				var bRR = RunningSum.ar(br * br, nSamp);
 				var bLR = RunningSum.ar(bl * br, nSamp);
@@ -210,7 +250,7 @@ StereoPhaseView {
 		task = Task({
 			server.sync;
 			corrSynth = Synth(\stereoPhase_corr,
-				[\inbus, inBus, \out, corrBus, \q, bandQ], server);
+				[\inbus, inBus, \out, corrBus, \q, bandRq], server);
 			0.2.wait;
 			{
 				this.prFrame(corrBus.getnSynchronous(3 + (numBands * 3)));
@@ -306,6 +346,8 @@ StereoPhaseView {
 			};
 		};
 
+		this.prBuildLobe(dt);
+
 		corrHistory[histPos] = correlation;
 		histPos = (histPos + 1) % corrHistory.size;
 	}
@@ -358,10 +400,114 @@ StereoPhaseView {
 
 	// --- PAZ-style polar stereo field -----------------------------------
 
+	// Half circle from hard left, up through centre, to hard right, sampled on
+	// exactly the same pos -> angle mapping the spokes and the band points
+	// use, so the web always lines up with what it is measuring.
+	//
+	// Pen.addArc is deliberately not used. It connects the current path
+	// position to the arc's start rather than beginning a new subpath, so the
+	// rings got joined to the last spoke by stray chords; and its angle
+	// convention (it negates both arguments, then Qt measures from 3 o'clock
+	// on a y-down canvas) does not agree with the sin/cos mapping used for the
+	// data. Together those drew a lopsided web - measured 726 pixels of grid
+	// on the left against 1918 on the right.
+	prHalfArc { arg cx, cy, radius, steps = 49;
+		steps.do { |i|
+			var pos = (i / (steps - 1) * 2) - 1;
+			var a = pos * (pi / 2);
+			var pt = Point(cx + (sin(a) * radius), cy - (cos(a) * radius));
+			if(i == 0) { Pen.moveTo(pt) } { Pen.lineTo(pt) };
+		};
+	}
+
+
+	// Energy against DIRECTION, which is what makes a stereo field legible.
+	// One spoke per frequency band draws a star that says almost nothing about
+	// spread; binning every band's energy by the direction it arrives from
+	// gives a lobe you can actually read - narrow and upright for mono, a wide
+	// fan for a broad mix, two humps for hard-panned material.
+	//
+	// The lower lobe is the anti-correlated portion only (energy * max(0, -c)),
+	// so it stays empty for in-phase AND for merely-uncorrelated-wide content,
+	// and only grows when something is genuinely phase-cancelling. Anything
+	// below the horizon is a real problem; that is the whole point of it.
+	prBuildLobe { arg dt;
+		var frameMax = 0;
+
+		dirBins.do { |k| lobeUp[k] = 0; lobeDown[k] = 0 };
+
+		numBands.do { |i|
+			var l = bandL[i], r = bandR[i];
+			var energy = ((l * l) + (r * r)) / 2;     // power adds linearly
+			var c = bandCorr[i].clip(-1, 1);
+			var fk, k0, k1, frac, down;
+			if(energy > 1e-12) {
+				// split across the two nearest bins, so moving a source does
+				// not make the lobe jump a whole bin at a time
+				fk = (((this.bandPosition(i) + 1) / 2) * (dirBins - 1))
+					.clip(0, dirBins - 1);
+				k0 = fk.floor.asInteger;
+				k1 = (k0 + 1).min(dirBins - 1);
+				frac = fk - k0;
+				down = energy * max(0, c.neg);
+				lobeUp[k0] = lobeUp[k0] + (energy * (1 - frac));
+				lobeUp[k1] = lobeUp[k1] + (energy * frac);
+				lobeDown[k0] = lobeDown[k0] + (down * (1 - frac));
+				lobeDown[k1] = lobeDown[k1] + (down * frac);
+			};
+		};
+
+		// a couple of smoothing passes, so a handful of bands still reads as
+		// a continuous shape rather than isolated spikes
+		2.do {
+			lobeUp = this.prSmooth(lobeUp);
+			lobeDown = this.prSmooth(lobeDown);
+		};
+
+		dirBins.do { |k| frameMax = max(frameMax, lobeUp[k]) };
+		if(autoScale) {
+			scaleMax = if(frameMax > scaleMax) {
+				frameMax
+			} {
+				scaleMax + ((frameMax - scaleMax) * (0.5 * dt))
+			};
+			scaleMax = scaleMax.max(1e-12);
+		};
+	}
+
+	prSmooth { arg arr;
+		var out = FloatArray.newClear(arr.size);
+		arr.size.do { |i|
+			out[i] = (arr[(i - 1).clip(0, arr.size - 1)]
+				+ (arr[i] * 2)
+				+ arr[(i + 1).clip(0, arr.size - 1)]) / 4;
+		};
+		^out
+	}
+
+	// bin index -> unit radius, via dB so quiet directions still register
+	// Radius from energy, in dB relative to the loudest direction.
+	//
+	// This gets its own range rather than reusing dbFloor/dbCeil, which exist
+	// for the per-band spokes. Over a 60 dB window a direction carrying a
+	// thousandth of the energy still reaches half radius, so the lobe looks
+	// full no matter what is playing and stops discriminating. 36 dB keeps
+	// quiet directions visible without letting them dominate the shape.
+	prLobeRadius { arg energy;
+		var ref = if(autoScale) { scaleMax } { 1.0 };
+		var db = (energy / ref).max(1e-12).log10 * 10;
+		^((db + lobeRange) / lobeRange).clip(0, 1)
+	}
+
+	// direction bin -> angle from straight up, same mapping the spokes use
+	prBinAngle { arg k;
+		^(((k / (dirBins - 1)) * 2) - 1) * (pi / 2)
+	}
+
 	prDrawPosition { arg r;
-		var cx = r.center.x, cy = r.bottom - 6;
-		var rad = min(r.width / 2, r.height) - 14;
-		var pts = Array.new(numBands);
+		// centre sits high enough to leave room for the out-of-phase lobe below
+		var cx = r.center.x, cy = r.top + (r.height * 0.72);
+		var rad = min(r.width / 2, r.height * 0.72) - 14;
 
 		Pen.use {
 			Pen.addRect(r); Pen.clip;
@@ -369,60 +515,81 @@ StereoPhaseView {
 			if(showGrid) {
 				Pen.color = gridColor;
 				Pen.width = 1;
-				// angle guides at L, -45, C, +45, R
 				[-1, -0.5, 0, 0.5, 1].do { |p|
 					var a = p * (pi / 2);
 					Pen.line(Point(cx, cy),
 						Point(cx + (sin(a) * rad), cy - (cos(a) * rad)));
 				};
-				// level rings
-				[0.25, 0.5, 0.75, 1].do { |f|
-					Pen.addArc(Point(cx, cy), rad * f, pi.neg / 2, pi);
-				};
 				Pen.stroke;
-			};
-
-			// one spoke per band, coloured by frequency
-			numBands.do { |i|
-				var a = this.bandPosition(i) * (pi / 2);
-				var rr = this.bandRadius(i);
-				var p = Point(cx + (sin(a) * rad * rr), cy - (cos(a) * rad * rr));
-				pts = pts.add(p);
-				if(rr > 0.005) {
-					Pen.color = map.at(i / (numBands - 1).max(1));
-					Pen.width = 2;
-					Pen.line(Point(cx, cy), p);
+				[0.25, 0.5, 0.75, 1].do { |f|
+					this.prHalfArc(cx, cy, rad * f);
 					Pen.stroke;
 				};
-			};
-
-			// outline joining the spoke tips, so the overall lobe reads
-			if(pts.size > 1) {
-				Pen.color = Color.white.alpha_(0.5);
-				Pen.width = 1;
-				Pen.moveTo(pts[0]);
-				pts.drop(1).do { |p| Pen.lineTo(p) };
+				// the horizon: anything under this line is out of phase
+				Pen.color = gridColor;
+				Pen.line(Point(cx - rad, cy), Point(cx + rad, cy));
 				Pen.stroke;
 			};
 
-			// peak hold arc
-			numBands.do { |i|
-				var a = this.bandPosition(i) * (pi / 2);
-				var p = Point(cx + (sin(a) * rad * bandPeak[i]),
-					cy - (cos(a) * rad * bandPeak[i]));
-				if(bandPeak[i] > 0.01) {
-					Pen.color = Color.white.alpha_(0.35);
-					Pen.addRect(Rect(p.x - 1, p.y - 1, 2, 2));
+			// --- out-of-phase lobe, mirrored below the horizon ---
+			this.prFillLobe(cx, cy, rad, lobeDown, -1,
+				Color(1, 0.3, 0.3, 0.55), Color(1, 0.45, 0.45));
+
+			// --- the stereo field itself ---
+			this.prFillLobe(cx, cy, rad, lobeUp, 1,
+				map.at(0.65).alpha_(0.5), map.at(0.95));
+
+			// --- optional per-band detail on top ---
+			if(showBands) {
+				numBands.do { |i|
+					var a = this.bandPosition(i) * (pi / 2);
+					var rr = this.bandRadius(i);
+					if(rr > 0.005) {
+						Pen.color = map.at(i / (numBands - 1).max(1)).alpha_(0.9);
+						Pen.width = 2;
+						Pen.line(Point(cx, cy),
+							Point(cx + (sin(a) * rad * rr), cy - (cos(a) * rad * rr)));
+						Pen.stroke;
+					};
 				};
 			};
-			Pen.fill;
 		};
 
 		if(showAxis) {
-			Pen.stringAtPoint("L", Point(cx - rad - 2, cy - 12), font, textColor);
-			Pen.stringAtPoint("R", Point(cx + rad - 4, cy - 12), font, textColor);
+			Pen.stringAtPoint("L", Point(cx - rad - 2, cy - 13), font, textColor);
+			Pen.stringAtPoint("R", Point(cx + rad - 4, cy - 13), font, textColor);
 			Pen.stringCenteredIn("C", Rect(cx - 8, r.top, 16, 12), font, textColor);
+			// any stereo material throws off a little negative correlation in
+			// some band; only say so when it is an actual share of the energy
+			if(lobeDown.maxItem > (lobeUp.maxItem * 0.02)) {
+				Pen.stringAtPoint("out of phase",
+					Point(cx + 6, cy + 4), font, Color(1, 0.45, 0.45));
+			};
 		};
+	}
+
+	// dir points up (+1) for the field, down (-1) for the anti-correlated part
+	prFillLobe { arg cx, cy, rad, bins, dir, fillColor, lineColor;
+		var pts, any = false;
+		pts = dirBins.collect { |k|
+			var rr = this.prLobeRadius(bins[k]);
+			var a = this.prBinAngle(k);
+			if(rr > 0.001) { any = true };
+			Point(cx + (sin(a) * rad * rr), cy - (dir * cos(a) * rad * rr))
+		};
+		if(any.not) { ^this };
+
+		Pen.color = fillColor;
+		Pen.moveTo(Point(cx, cy));
+		pts.do { |pt| Pen.lineTo(pt) };
+		Pen.lineTo(Point(cx, cy));
+		Pen.fill;
+
+		Pen.color = lineColor;
+		Pen.width = 1.5;
+		Pen.moveTo(pts[0]);
+		pts.drop(1).do { |pt| Pen.lineTo(pt) };
+		Pen.stroke;
 	}
 
 	// --- correlation meter, under the position display ------------------
@@ -501,7 +668,10 @@ StereoPhaseView {
 			Pen.width = 1;
 			Pen.line(Point(dest.center.x, dest.top), Point(dest.center.x, dest.bottom));
 			Pen.line(Point(dest.left, dest.center.y), Point(dest.right, dest.center.y));
-			Pen.addArc(dest.center, side / 2, 0, 2pi);
+			Pen.stroke;
+			// addOval starts its own subpath; addArc would chord back to the
+			// end of the last line above
+			Pen.addOval(dest);
 			Pen.stroke;
 		};
 		if(showAxis) {
@@ -642,7 +812,8 @@ StereoPhaseView {
 			.keyDownAction_({ |v, ch|
 				case
 				{ ch == $m } { this.prCycleMode }
-				{ ch == $g } { this.showGrid_(showGrid.not) };
+				{ ch == $g } { this.showGrid_(showGrid.not) }
+				{ ch == $b } { this.showBands_(showBands.not) };
 			});
 
 		if(ownsWindow) { window.onClose_({ this.stop }).front };
@@ -685,6 +856,15 @@ StereoPhaseView {
 	persistence_ { arg p; persistence = p.clip(0, 0.99); this.refresh }
 	peakHold_ { arg sec; peakHold = sec }
 	showGrid_ { arg bool; showGrid = bool; this.refresh }
+	showBands_ { arg bool; showBands = bool; this.refresh }
+	autoScale_ { arg bool; autoScale = bool; this.refresh }
+	lobeRange_ { arg db; lobeRange = db.clip(6, 120); this.refresh }
+	dirBins_ { arg n;
+		dirBins = n.clip(9, 361);
+		lobeUp = FloatArray.fill(dirBins, 0);
+		lobeDown = FloatArray.fill(dirBins, 0);
+		this.refresh;
+	}
 	showAxis_ { arg bool; showAxis = bool; this.refresh }
 
 	fps_ { arg f; fps = f.clip(1, 120); this.prBuildHistory; this.refresh }
@@ -698,7 +878,8 @@ StereoPhaseView {
 
 	// these change the shape of the analysis, so the synth has to restart
 	numBands_ { arg n; this.prReshape({ numBands = n.clip(2, 64) }) }
-	bandQ_ { arg q; this.prReshape({ bandQ = q.clip(0.01, 2) }) }
+	// width multiplier around the spacing-derived default; 1.0 tiles exactly
+	bandQ_ { arg q; this.prReshape({ bandQ = q.clip(0.05, 4) }) }
 	integration_ { arg sec; this.prReshape({ integration = sec.clip(0.001, 1) }) }
 	freqRange_ { arg lo, hi;
 		this.prReshape({

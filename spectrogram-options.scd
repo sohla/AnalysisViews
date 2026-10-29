@@ -18,12 +18,33 @@ s.waitForBoot({
 	SynthDef(\specTest, { |amp = 0.2|
 		var sweep = SinOsc.ar(LFNoise0.kr(0.5).exprange(200, 6000), 0, 0.2);
 		var noise = BPF.ar(PinkNoise.ar(2), LFNoise1.kr(0.2).exprange(400, 8000), 0.1);
-		var harm  = Mix(Array.fill(6, { |i|
-			SinOsc.ar(110 * (i + 1), 0, 0.1 / (i + 1)) }));
+		// var harm  = Mix(Array.fill(6, { |i|
+		// SinOsc.ar(110 * (i + 1), 0, 0.1 / (i + 1)) }));
+		var harm = Splay.arFill(6, { |i|
+			SinOsc.ar(110 * (i + 1), 0, 0.5 / (i + 1)) });
+
 		var clicks = Decay2.ar(Impulse.ar(2), 0.001, 0.08) * WhiteNoise.ar(0.3);
-		Out.ar(0, ((sweep + noise + harm + clicks) * amp).dup);
+		// Out.ar(0, ((sweep + noise + harm + clicks) * amp));
+		Out.ar(0, (harm * amp));
 	}).add;
 });
+)
+
+
+(
+
+	SynthDef(\specTest, { |amp = 0.2|
+		var sweep = SinOsc.ar(LFNoise0.kr(0.5).exprange(200, 6000), 0, 0.2);
+		var noise = BPF.ar(PinkNoise.ar(2), LFNoise1.kr(0.2).exprange(400, 8000), 0.1);
+		// var harm  = Mix(Array.fill(6, { |i|
+		// SinOsc.ar(110 * (i + 1), 0, 0.1 / (i + 1)) }));
+		var harm = Splay.arFill(16, { |i|
+			SinOsc.ar(110 * (i + 1), 0, 0.5 / (i + 1)) });
+
+		var clicks = Decay2.ar(Impulse.ar(2), 0.001, 0.08) * WhiteNoise.ar(0.3);
+		// Out.ar(0, ((sweep + noise + harm + clicks) * amp));
+		Out.ar(0, (harm * amp));
+	}).add;
 )
 
 x = Synth(\specTest);      // run this so there is something to see
@@ -265,10 +286,11 @@ f.close;
 
 /* =====================================================================
    E - StereoPhaseView
-   Stereo field and phase. The \position mode follows the Waves PAZ
-   Position panel - a half circle from hard left to hard right - but
-   draws one spoke per frequency band, coloured by frequency, so you
-   can see WHICH material sits where rather than just one lobe.
+   Stereo field and phase, after the Waves PAZ Position panel. The
+   \position mode bins every band's energy by the DIRECTION its L/R
+   balance implies, so you get a readable lobe: narrow spike for mono,
+   broad fan for a wide mix, humps at the edges for hard-panned.
+   Out-of-phase energy shows as a red lobe BELOW the horizon.
    Needs a stereo source on inBus (reads 2 consecutive buses).
    ===================================================================== */
 (
@@ -295,12 +317,20 @@ p.mode_(\gonio);           // Lissajous: mono vertical, out-of-phase horizontal
 p.mode_(\bands);           // correlation per band, diverging colour
 p.mode_(\history);         // correlation over time
 
+// the field itself
+p.showBands_(true);        // overlay per-band spokes - which material, where
+p.showBands_(false);       // just the lobe - how much, from where
+p.lobeRange_(36);          // dB range the lobe spans; lower = more selective
+p.lobeRange_(60);          // wider = fuller looking, less discriminating
+p.dirBins_(121);           // smoother lobe
+p.autoScale_(true);        // normalise to the loudest direction
+
 // look
 p.map_(\turbo);            // spoke colour, by frequency
 p.corrMap_(\rdbu);         // correlation colour, diverging
 p.persistence_(0.9);       // goniometer phosphor trail
 p.scopeColor_(Color(1, 0.8, 0.3));
-p.dbRange_(-70, 0);
+p.dbRange_(-110, -10);
 
 // analysis (these restart the synth)
 p.numBands_(24);
@@ -334,6 +364,15 @@ p.close;
 ~t.set(\which, 0);   // identical  -> correlation +1, vertical line in \gonio
 ~t.set(\which, 1);   // inverted   -> correlation -1, horizontal line
 ~t.set(\which, 2);   // unrelated  -> correlation  0, round cloud
+~t.free;
+
+// And the field itself - Splay spreads an array across the image in
+// ARRAY ORDER, so ascending frequencies put lows left and highs right:
+(~t = { Splay.ar(SinOsc.ar([180, 330, 540, 880, 1400, 2300, 3700, 6000], 0, 0.12)) }.play;)
+~t.free;
+(~t = { var m = Mix(SinOsc.ar([180, 330, 540, 880], 0, 0.12)); [m, m] }.play;)      // mono
+~t.free;
+(~t = { var m = Mix(SinOsc.ar([180, 330, 540, 880], 0, 0.12)); [m, m.neg] }.play;)  // inverted
 ~t.free;
 
 
