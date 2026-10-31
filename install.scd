@@ -13,7 +13,7 @@
 // class stop the library compiling. Remove that one first.
 
 (
-var name = "Analysis-Spectrogram";
+var name = "AnalysisViews";
 var src = thisProcess.nowExecutingPath.dirname +/+ "classes";
 var files = (src +/+ "*.sc").pathMatch;
 var install, win;

@@ -1,4 +1,4 @@
-# Spectral displays for SuperCollider
+# AnalysisViews — spectral displays for SuperCollider
 
 Configurable-colour real-time analysis views, written because the Spectrogram
 quark is greyscale, fixed at 17 brightness steps, and clips everything below
@@ -22,7 +22,7 @@ window asks where to put them:
 - **System** — `Platform.systemExtensionDir`, all users, may need admin rights
 - **Choose folder...** — any folder SuperCollider compiles from
 
-They are copied to an `Analysis-Spectrogram` folder there. Running it again
+They are copied to an `AnalysisViews` folder there. Running it again
 replaces that copy. It refuses to install if any of these classes is already
 compiled from somewhere else — an older copy, or the symlink below — because
 two definitions of one class stop the library compiling. Remove that one first.
@@ -32,7 +32,7 @@ so edits take effect without reinstalling:
 
 ```
 ln -s "$PWD/classes" \
-  "$HOME/Library/Application Support/SuperCollider/Extensions/Analysis-Spectrogram"
+  "$HOME/Library/Application Support/SuperCollider/Extensions/AnalysisViews"
 ```
 
 **Then recompile the class library — `Cmd-Shift-L`.** SuperCollider will not

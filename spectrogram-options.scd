@@ -8,7 +8,7 @@
  Evaluate blocks one at a time (Cmd-Return inside each parenthesis).
 
  Classes live in ./classes, symlinked into Extensions as
- "Analysis-Spectrogram". After editing them: Language > Recompile (Cmd-Shift-L).
+ "AnalysisViews". After editing them: Language > Recompile (Cmd-Shift-L).
 =========================================================================
 */
 
