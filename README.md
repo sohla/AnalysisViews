@@ -15,8 +15,20 @@ magnitude 1.0 — a hard floor of −48.2 dBFS at `bufSize` 1024.
 
 ## Install
 
-The classes live in `classes/`, symlinked into SuperCollider's Extensions
-directory:
+The classes live in `classes/`. Open `install.scd`, select all and evaluate. A
+window asks where to put them:
+
+- **User** — `Platform.userExtensionDir`, just you, no admin rights needed
+- **System** — `Platform.systemExtensionDir`, all users, may need admin rights
+- **Choose folder...** — any folder SuperCollider compiles from
+
+They are copied to an `Analysis-Spectrogram` folder there. Running it again
+replaces that copy. It refuses to install if any of these classes is already
+compiled from somewhere else — an older copy, or the symlink below — because
+two definitions of one class stop the library compiling. Remove that one first.
+
+To work on the classes instead, symlink `classes/` into the Extensions directory
+so edits take effect without reinstalling:
 
 ```
 ln -s "$PWD/classes" \
